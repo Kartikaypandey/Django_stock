@@ -88,29 +88,40 @@ def sharpe_ratio(returns, risk_free_rate=0.05 / 252):
     return (np.mean(returns) - risk_free_rate) / np.std(returns)
     
 def analyze_stock(df):
-    df.loc[:, 'EMA100'] = df['Close'].ewm(span=100).mean()
-    df.loc[:, 'EMA200'] = df['Close'].ewm(span=200).mean()
+    # Ensure df is a copy of the original DataFrame to avoid the warning
+    df = df.copy()
+
+    # Calculate the Exponential Moving Averages (EMA)
+    df['EMA100'] = df['Close'].ewm(span=100).mean()
+    df['EMA200'] = df['Close'].ewm(span=200).mean()
+
+    # Calculate various stock metrics
     one_year_return = (df['Close'].iloc[-1] / df['Close'].iloc[-252] - 1) * 100
     high_52_week = df['Close'].iloc[-252:].max()
     within_10_pct_high = df['Close'].iloc[-1] >= high_52_week * 0.6
 
+    # Calculate the percentage of up days in the last six months
     six_month_data = df['Close'].iloc[-126:]
     up_days = (six_month_data.pct_change() > 0).sum()
     up_days_pct = up_days / len(six_month_data) * 100
 
+    # Calculate returns over 6, 3, and 1 month periods
     return_6m = (df['Close'].iloc[-1] / df['Close'].iloc[-126] - 1) * 100
     return_3m = (df['Close'].iloc[-1] / df['Close'].iloc[-63] - 1) * 100
     return_1m = (df['Close'].iloc[-1] / df['Close'].iloc[-21] - 1) * 100
 
+    # Calculate returns for 3, 6, and 12 months to be used for Sharpe ratio
     returns_3m = df['Close'].iloc[-63:].pct_change().dropna()
     returns_6m = df['Close'].iloc[-126:].pct_change().dropna()
     returns_12m = df['Close'].iloc[-252:].pct_change().dropna()
 
+    # Calculate Sharpe ratios
     sharpe_3m = sharpe_ratio(returns_3m)
     sharpe_6m = sharpe_ratio(returns_6m)
     sharpe_12m = sharpe_ratio(returns_12m)
     avg_sharpe = (sharpe_3m + sharpe_6m + sharpe_12m) / 3
 
+    # Return the analyzed stock metrics
     return {
         'EMA100': df['EMA100'].iloc[-1],
         'EMA200': df['EMA200'].iloc[-1],
@@ -134,35 +145,39 @@ def meets_criteria(stock_data, min_return):
             stock_data['Up_Days_Pct'] > 50)
 
 def download_and_save_data(tickers, start_date, end_date):
+    logging.info("In download and save data")
+
     all_data = []
     base_dir = "/Users/kartikaypandey/Documents/django_projects/stockproject/"
     file_path = f"{base_dir}{datetime.now().strftime('%Y-%m-%d')}.csv"
     # Check if the file already exists
     if os.path.exists(file_path):
-        print(f"Loading data from {file_path}")
+        logging.info("Using existing file for data")
         combined_df = pd.read_csv(file_path)
     else:
         # Download data if the file does not exist
         for ticker in tickers:
             try:
-                print(f"Downloading data for ticker: {ticker}")
+                logging.info(f"Data downloaded for {ticker}")
                 df = yf.download(ticker, start=start_date, end=end_date)
                 df['Ticker'] = ticker
                 all_data.append(df)
             except Exception as e:
-                print(f"Error downloading data for {ticker}: {e}")
+                logging.info(f"Error downloading data for {ticker}: {e}")
         
         if all_data:
             combined_df = pd.concat(all_data)
             combined_df.to_csv(file_path, index=False)
-            print(f"Data downloaded and saved to {file_path}")
+            logging.info(f"Data downloaded and saved to {file_path}")
         else:
-            print("No data downloaded.")
+            logging.info("No data downloaded.")
             return None
 
     return combined_df
 
 def process_tickers(tickers, start_date, end_date,min_return=6.5):
+    logging.info("Processing Tickers ..")
+
     summary = []
 
     # Use the data from the saved file or downloaded data
@@ -189,14 +204,14 @@ def process_tickers(tickers, start_date, end_date,min_return=6.5):
                         'Avg_Sharpe': stock_data['Avg_Sharpe'],
                     })
         except Exception as e:
-            print(f"Error analyzing {ticker}: {e}")
+            logging.info(f"Error analyzing {ticker}: {e}")
 
     return summary
 
 
 def rank_and_sort_summary(summary, n):
     if not summary:
-        print("No stocks meet the criteria.")
+        logging.info("No stocks meet the criteria.")
         return pd.DataFrame()  # Return an empty DataFrame or handle as needed
     
     df_summary = pd.DataFrame(summary)
@@ -226,6 +241,17 @@ def rank_and_sort_summary(summary, n):
 
     return df_summary_sorted
 
+def delete_old_files(base_dir, current_date):
+    # List all files in the directory
+    for file_name in os.listdir(base_dir):
+        file_path = os.path.join(base_dir, file_name)
+        if file_name.endswith('.csv') and current_date not in file_name:
+            try:
+                os.remove(file_path)
+                logging.info(f"Deleted old file: {file_path}")
+            except Exception as e:
+                logging.error(f"Failed to delete file {file_path}: {e}")
+                
 #  * * * * 
 # /Users/kartikaypandey/Documents/django_projects/stockproject/venv/bin/python3 
 # /Users/kartikaypandey/Documents/django_projects/stockproject/scripts/download_stock_data.py >> 
@@ -234,15 +260,16 @@ def download_stock_data():
     logging.info("Started downloading stock data.")
     end_date = datetime.today()
     start_date = end_date - timedelta(days=2*365)  # 2 years of data
+    logging.info("Getting Tickers ..")
     tickers = getTickers()
-
     summary = process_tickers(tickers, start_date, end_date)
-    sorted_data = rank_and_sort_summary(summary, 50)
+    sorted_data = rank_and_sort_summary(summary, 100)
 
     data = sorted_data.to_dict(orient='records')
     # Save the data to a CSV file with today's date
-    base_dir = "/Users/kartikaypandey/Documents/django_projects/stockproject/top50_"
-    file_path = f"{base_dir}{datetime.now().strftime('%Y-%m-%d')}.csv"
+    base_dir = "/Users/kartikaypandey/Documents/django_projects/stockproject/"
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    file_path = f"{base_dir}top50_{current_date}.csv"
     
     try:
         sorted_data.to_csv(file_path)
@@ -250,6 +277,8 @@ def download_stock_data():
     except Exception as e:
         logging.error(f"Failed to save data to CSV: {e}")
 
+    # After saving, delete older files
+    delete_old_files(base_dir, current_date)
 
 if __name__ == "__main__":
     download_stock_data()
